@@ -374,13 +374,36 @@ def _normalize_autocomplete(steps: list[dict]) -> list[dict]:
     return out
 
 
-def _generate_extract_expr(proposal: ToolProposal, llm: LLM, obs) -> str:
-    """Ask the LLM for a JS extraction expression for the given page."""
+def _generate_extract_expr(
+    proposal: ToolProposal,
+    llm: LLM,
+    obs,
+    placeholders: Optional[dict[str, str]] = None,
+) -> str:
+    """Ask the LLM for a JS extraction expression for the given page.
+
+    `placeholders` is the per-parameter example value that was typed during
+    recording. We surface it to the LLM as `args.<name> (example was 'X')` so
+    the model has zero excuse to inline the literal — it knows the example was
+    the recording-time value and the caller will pass something else.
+    """
+    placeholders = placeholders or {}
+    if placeholders:
+        bindings = "\n".join(
+            f"  - args.{name}  (example used during recording: {val!r})"
+            for name, val in placeholders.items()
+        )
+    else:
+        bindings = "  (the tool takes no parameters)"
     user_msg = (
         f"Tool: {proposal.name}\n"
-        f"Description: {proposal.description}\n"
-        f"Parameters JSON Schema: {json.dumps(proposal.parameters)}\n\n"
-        f"PAGE AT {obs.url}:\n{obs.text}\n"
+        f"Description: {proposal.description}\n\n"
+        f"Parameter access pattern (use these EXACTLY in your expression):\n"
+        f"{bindings}\n\n"
+        f"Parameters JSON Schema (for type info): {json.dumps(proposal.parameters)}\n\n"
+        f"Page URL: {obs.url}\n"
+        f"Page title: {getattr(obs, 'title', '') or ''}\n\n"
+        f"PAGE STRUCTURE (accessibility tree):\n{obs.text}\n"
     )
     resp = llm.client.chat.completions.create(
         model=llm.model,
@@ -412,7 +435,7 @@ def record_action_recipe(
         # expression so multi-step tools (search, booking lookup) return data.
         try:
             obs = rec_browser.observe()
-            extract_expr = _generate_extract_expr(proposal, llm, obs)
+            extract_expr = _generate_extract_expr(proposal, llm, obs, placeholders)
         except Exception as e:
             _console.print(f"    [yellow]extract step skipped: {e}[/]")
 
@@ -433,19 +456,29 @@ def record_action_recipe(
 
 
 _EXTRACT_SYSTEM = """\
-You produce a Playwright-compatible JavaScript expression that, when run in
-the page via `page.evaluate(...)`, returns the data described by the tool.
+You produce a Playwright-compatible JavaScript ARROW FUNCTION that, when
+called in the page via `page.evaluate(fn, args)`, returns the data described
+by the tool.
 
 Output JSON of the form:
-{ "js_expr": "(() => { ... })()" }
+{ "js_expr": "(args) => { ... return data; }" }
 
-Rules:
-- Return ONLY the JS expression in `js_expr` (no markdown, no comments outside).
-- The expression must be a self-contained arrow / IIFE that returns the value.
-- If the tool has parameters, treat them as JS template literals already
-  substituted at call time (e.g. `{{n}}` will be replaced with the int).
-- Prefer plain `document.querySelectorAll` + `.map()` patterns.
-- Cap results to {{n}} if relevant; default sensible (5).
+HARD RULES (the recipe is rejected if violated):
+- `js_expr` MUST be a single arrow function whose only parameter is named
+  `args`. Not an IIFE. Not a multi-statement block. One arrow function.
+- Read every tool parameter via `args.<name>` — for example `args.query`,
+  `args.n`. NEVER inline a literal example value. If the prompt tells you
+  the example for `query` was "Foo Bar", you write `args.query`, NOT
+  `'Foo Bar'`. The literal value is what was typed during recording; the
+  caller will pass a DIFFERENT value at replay time.
+- Anchor selectors under <main>, <article>, the search-results container,
+  or a result-list landmark visible on the page. AVOID extracting from
+  <nav>, <aside>, <header>, <footer>, breadcrumb trails, "main page /
+  contents / about" sidebar menus, cookie banners, or footer link lists.
+- If the tool has an `n` parameter, cap results to `args.n`. Otherwise
+  default to a reasonable cap (5 or 10).
+- Use plain `document.querySelector(All)` + `.map()`. Return a plain
+  JSON-serializable value (array of objects, or a single object).
 """
 
 
@@ -455,7 +488,7 @@ def record_extract_recipe(
     # Visit the starting URL once so the LLM sees the actual structure.
     browser.goto(proposal.start_url)
     obs = browser.observe()
-    expr = _generate_extract_expr(proposal, llm, obs)
+    expr = _generate_extract_expr(proposal, llm, obs, _placeholders_for(proposal))
 
     steps = [
         {"op": "goto", "url": proposal.start_url},

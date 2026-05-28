@@ -53,7 +53,10 @@ def _substitute(value: Any, args: dict) -> Any:
     if isinstance(value, list):
         return [_substitute(v, args) for v in value]
     if isinstance(value, dict):
-        return {k: _substitute(v, args) for k, v in value.items()}
+        # `expr` is JS source for js_extract — args are passed natively via
+        # page.evaluate(expr, args), so we must NOT template into it (would be
+        # JS injection and would lose type information).
+        return {k: (v if k == "expr" else _substitute(v, args)) for k, v in value.items()}
     return value
 
 
@@ -93,6 +96,16 @@ class Engine:
                 elif op == "press_enter":
                     loc = resolve(self.browser.page, Target.from_dict(step["target"]))
                     loc.press("Enter")
+                elif op == "press":
+                    # Generic key press. With a target, press the key on that
+                    # element; otherwise press it on whatever is focused. Used
+                    # for autocomplete commit sequences (ArrowDown, Enter).
+                    key = step.get("key", "Enter")
+                    if step.get("target"):
+                        loc = resolve(self.browser.page, Target.from_dict(step["target"]))
+                        loc.press(key)
+                    else:
+                        self.browser.press_key(key)
                 elif op == "select":
                     loc = resolve(self.browser.page, Target.from_dict(step["target"]))
                     value = step.get("value", "")
@@ -112,8 +125,11 @@ class Engine:
                     returned[step["key"]] = val
                 elif op == "js_extract":
                     # Custom JS for tricky extraction. Deterministic — no LLM.
+                    # Parameters are passed natively as the second arg to
+                    # page.evaluate, bound to `args` inside an `(args) => {...}`
+                    # function. Legacy IIFE expressions ignore the extra arg.
                     expr = step["expr"]
-                    val = self.browser.page.evaluate(expr)
+                    val = self.browser.page.evaluate(expr, args)
                     returned[step["key"]] = val
                 elif op == "verify":
                     import time

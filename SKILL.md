@@ -1,7 +1,7 @@
 ---
 name: Agentify
 description: Turn any website into an LLM-callable API. Phase 1 ("map") visits a site, proposes tool functions, and records deterministic Playwright recipes into recipes/<slug>.tools.json. Phase 2 ("call" or "run-mapped") replays a recipe directly or lets the LLM pick a tool from natural language — the page itself is never sent to the model. Use when the user wants to scrape, automate, or expose a website as tools.
-argument-hint: [map|call|run-mapped] [...args]
+argument-hint: "[map|call|run-mapped] [...args]"
 allowed-tools: Bash, Read
 ---
 

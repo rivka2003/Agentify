@@ -33,6 +33,9 @@ htmlcov/
 source/recipes/*.json
 !source/recipes/.gitkeep
 
+# Saved login sessions (cookies/localStorage) — never commit
+source/sessions/
+
 # Editor / OS
 .DS_Store
 Thumbs.db

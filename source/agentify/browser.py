@@ -1,7 +1,8 @@
 """Thin Playwright wrapper. Actions are keyed by AX-tree element id."""
 
 from dataclasses import dataclass
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union
 
 from playwright.sync_api import Locator, Page, sync_playwright
 
@@ -62,6 +63,18 @@ class Browser:
             self._browser.close()
         if self._pw:
             self._pw.stop()
+
+    def save_storage_state(self, path: Union[str, Path]) -> Path:
+        """Persist cookies + localStorage to `path` for later session reuse.
+
+        Returns the path written. Secrets (the typed credentials) are not part
+        of storage_state — only the session artifacts the site set after login.
+        """
+        assert self._context is not None, "browser not started"
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        self._context.storage_state(path=str(p))
+        return p
 
     def __enter__(self) -> "Browser":
         self.start()

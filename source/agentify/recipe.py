@@ -14,7 +14,9 @@ _log = logging.getLogger(__name__)
 
 
 class RecipeFailure(Exception):
-    def __init__(self, step_index: int, reason: str, op: Optional[str] = None):
+    # step_index is an int for top-level steps, or a path string like
+    # "2.then[1]" for a step inside an if_verify branch.
+    def __init__(self, step_index, reason: str, op: Optional[str] = None):
         super().__init__(f"step {step_index}: {reason}")
         self.step_index = step_index
         self.reason = reason
@@ -188,38 +190,46 @@ class Engine:
         args = args or {}
         returned: dict[str, Any] = {}
         steps = _substitute(recipe.steps, args)
-
         for i, step in enumerate(steps):
-            op = step.get("op")
-            # A step may opt out of being fatal (`optional: true`), and the
-            # presentational ops are implicitly non-fatal.
-            skippable = bool(step.get("optional")) or op in _NONFATAL_OPS
-            attempt = 0
-            while True:
-                try:
-                    self._run_op(i, step, op, args, returned)
-                    break
-                except RecipeFailure as rf:
-                    # Deterministic (verify / unknown op): never retried.
-                    if skippable:
-                        self._on_warn(f"step {i} ({op}) skipped — {rf.reason}")
-                        break
-                    raise
-                except Exception as e:
-                    if attempt < self.max_retries and _is_transient(e):
-                        attempt += 1
-                        if self.backoff_s:
-                            time.sleep(self.backoff_s)
-                        continue
-                    reason = _one_line_reason(op, step, e)
-                    if skippable:
-                        self._on_warn(f"step {i} ({op}) skipped — {reason}")
-                        break
-                    raise RecipeFailure(i, reason, op=op) from e
-
+            self._execute_step(i, step, args, returned)
         return returned
 
-    def _run_op(self, i: int, step: dict, op: Optional[str], args: dict,
+    def _execute_step(self, idx, step: dict, args: dict, returned: dict) -> None:
+        """Run one step with retry / `optional` / one-line-failure handling.
+
+        Shared by the top-level loop and by `if_verify` branches, so a sub-step
+        inside a branch keeps the same robustness and branches can nest. `idx` is
+        an int for top-level steps or a path string (e.g. "2.then[1]") for a
+        step inside a branch.
+        """
+        op = step.get("op")
+        # A step may opt out of being fatal (`optional: true`), and the
+        # presentational ops are implicitly non-fatal.
+        skippable = bool(step.get("optional")) or op in _NONFATAL_OPS
+        attempt = 0
+        while True:
+            try:
+                self._run_op(idx, step, op, args, returned)
+                return
+            except RecipeFailure as rf:
+                # Deterministic (verify / unknown op): never retried.
+                if skippable:
+                    self._on_warn(f"step {idx} ({op}) skipped — {rf.reason}")
+                    return
+                raise
+            except Exception as e:
+                if attempt < self.max_retries and _is_transient(e):
+                    attempt += 1
+                    if self.backoff_s:
+                        time.sleep(self.backoff_s)
+                    continue
+                reason = _one_line_reason(op, step, e)
+                if skippable:
+                    self._on_warn(f"step {idx} ({op}) skipped — {reason}")
+                    return
+                raise RecipeFailure(idx, reason, op=op) from e
+
+    def _run_op(self, idx, step: dict, op: Optional[str], args: dict,
                 returned: dict) -> None:
         """Execute a single step. Raises on failure; retry/optional handling
         lives in `execute`. May raise raw exceptions (wrapped by the caller) or a
@@ -306,6 +316,16 @@ class Engine:
             if not wait_for_condition(self.browser.page, step, timeout_s=3.0):
                 kind = step.get("kind", "page_text_contains")
                 expected = str(step.get("value", ""))
-                raise RecipeFailure(i, f"verify failed: {kind}={expected!r}", op="verify")
+                raise RecipeFailure(idx, f"verify failed: {kind}={expected!r}", op="verify")
+        elif op == "if_verify":
+            # Conditional branch: evaluate the `check` probe once (same shape as
+            # `verify`) and run the `then` or `else` sub-steps. Each sub-step goes
+            # back through `_execute_step`, so it keeps retry/optional and can
+            # itself be another `if_verify` (branches nest). A missing branch is a
+            # no-op — the natural "if present, dismiss; else nothing" shape.
+            passed = evaluate_condition(self.browser.page, step.get("check") or {})
+            branch = "then" if passed else "else"
+            for j, sub in enumerate(step.get(branch) or []):
+                self._execute_step(f"{idx}.{branch}[{j}]", sub, args, returned)
         else:
-            raise RecipeFailure(i, f"unknown op {op!r}", op=op)
+            raise RecipeFailure(idx, f"unknown op {op!r}", op=op)

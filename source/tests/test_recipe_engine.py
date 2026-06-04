@@ -298,3 +298,144 @@ def test_failure_reason_is_a_single_actionable_line():
         assert "at line 2" not in e.reason  # stack tail dropped
         return
     raise AssertionError("should have raised RecipeFailure")
+
+
+# -------------------------------------------------------- branching (#8)
+
+def _if_verify(value, then_url, else_url, kind="page_text_contains"):
+    return {
+        "op": "if_verify",
+        "check": {"kind": kind, "value": value},
+        "then": [{"op": "goto", "url": then_url}],
+        "else": [{"op": "goto", "url": else_url}],
+    }
+
+
+def test_if_verify_runs_then_branch_when_condition_true():
+    browser = FakeBrowser(page=FakePage(body_text="A modal dialog is open"))
+    recipe = Recipe(name="t", description="", parameters={},
+                    steps=[_if_verify("modal", "https://then/", "https://else/")])
+    Engine(browser).execute(recipe, {})
+    assert ("goto", "https://then/") in browser.actions
+    assert ("goto", "https://else/") not in browser.actions
+
+
+def test_if_verify_runs_else_branch_when_condition_false():
+    browser = FakeBrowser(page=FakePage(body_text="nothing here"))
+    recipe = Recipe(name="t", description="", parameters={},
+                    steps=[_if_verify("modal", "https://then/", "https://else/")])
+    Engine(browser).execute(recipe, {})
+    assert ("goto", "https://else/") in browser.actions
+    assert ("goto", "https://then/") not in browser.actions
+
+
+def test_if_verify_missing_branch_is_a_noop():
+    # Condition false and no `else` -> nothing happens, no error.
+    browser = FakeBrowser(page=FakePage(body_text=""))
+    recipe = Recipe(
+        name="t", description="", parameters={},
+        steps=[{
+            "op": "if_verify",
+            "check": {"kind": "page_text_contains", "value": "modal"},
+            "then": [{"op": "goto", "url": "https://then/"}],
+        }],
+    )
+    Engine(browser).execute(recipe, {})
+    assert browser.actions == []
+
+
+def test_if_verify_substitutes_params_into_branch():
+    # `_substitute` recurses into branch sub-steps, so {{param}} resolves there.
+    browser = FakeBrowser(page=FakePage(body_text="go"))
+    recipe = Recipe(
+        name="t", description="", parameters={},
+        steps=[{
+            "op": "if_verify",
+            "check": {"kind": "page_text_contains", "value": "go"},
+            "then": [{"op": "goto", "url": "https://x/?q={{q}}"}],
+        }],
+    )
+    Engine(browser).execute(recipe, {"q": "hello"})
+    assert ("goto", "https://x/?q=hello") in browser.actions
+
+
+def test_if_verify_optional_substep_failure_is_skipped_and_branch_continues():
+    # A sub-step inside a branch still gets #7's optional handling: it is skipped
+    # on failure and the rest of the branch runs.
+    warnings = []
+    browser = FakeBrowser(page=FakePage(body_text="modal", click_fail_times=1))
+    engine = Engine(browser, max_retries=0, backoff_s=0, on_warn=warnings.append)
+    recipe = Recipe(
+        name="t", description="", parameters={},
+        steps=[{
+            "op": "if_verify",
+            "check": {"kind": "page_text_contains", "value": "modal"},
+            "then": [
+                {**_CLICK, "optional": True},
+                {"op": "goto", "url": "https://after/"},
+            ],
+        }],
+    )
+    engine.execute(recipe, {})
+    assert ("goto", "https://after/") in browser.actions
+    assert warnings and "then[0]" in warnings[0]
+
+
+def test_if_verify_substep_failure_reports_branch_path():
+    # A non-optional sub-step failure surfaces a path-style step_index.
+    browser = FakeBrowser(page=FakePage(body_text="modal", click_fail_times=1))
+    recipe = Recipe(
+        name="t", description="", parameters={},
+        steps=[{
+            "op": "if_verify",
+            "check": {"kind": "page_text_contains", "value": "modal"},
+            "then": [_CLICK],
+        }],
+    )
+    try:
+        Engine(browser, max_retries=0).execute(recipe, {})
+    except RecipeFailure as e:
+        assert e.op == "click"
+        assert "then[0]" in str(e.step_index)
+        return
+    raise AssertionError("should have raised RecipeFailure")
+
+
+def test_if_verify_nests():
+    # An if_verify inside a branch is just another step -> branches nest.
+    browser = FakeBrowser(page=FakePage(body_text="modal alpha"))
+    inner = {
+        "op": "if_verify",
+        "check": {"kind": "page_text_contains", "value": "alpha"},
+        "then": [{"op": "goto", "url": "https://inner-then/"}],
+        "else": [{"op": "goto", "url": "https://inner-else/"}],
+    }
+    recipe = Recipe(
+        name="t", description="", parameters={},
+        steps=[{
+            "op": "if_verify",
+            "check": {"kind": "page_text_contains", "value": "modal"},
+            "then": [inner],
+        }],
+    )
+    Engine(browser).execute(recipe, {})
+    assert ("goto", "https://inner-then/") in browser.actions
+
+
+def test_if_verify_uses_element_exists_probe():
+    # The branch predicate reuses evaluate_condition's element_exists kind.
+    present = FakeBrowser(page=FakePage(locator_count=1))
+    absent = FakeBrowser(page=FakePage(locator_count=0))
+    recipe = Recipe(
+        name="t", description="", parameters={},
+        steps=[{
+            "op": "if_verify",
+            "check": {"kind": "element_exists", "target": {"role": "dialog"}},
+            "then": [{"op": "goto", "url": "https://has/"}],
+            "else": [{"op": "goto", "url": "https://none/"}],
+        }],
+    )
+    Engine(present).execute(recipe, {})
+    Engine(absent).execute(recipe, {})
+    assert ("goto", "https://has/") in present.actions
+    assert ("goto", "https://none/") in absent.actions

@@ -439,3 +439,38 @@ def test_if_verify_uses_element_exists_probe():
     Engine(absent).execute(recipe, {})
     assert ("goto", "https://has/") in present.actions
     assert ("goto", "https://none/") in absent.actions
+
+
+# ------------------------------------------------ recovery from failure (#10)
+
+def test_failure_carries_partial_results_and_url():
+    # A recipe that extracts a value then hits a non-optional failing step: the
+    # raised RecipeFailure salvages what was already extracted and where it died.
+    browser = FakeBrowser(page=FakePage(url="https://shop.example/cart", click_fail_times=1))
+    recipe = Recipe(
+        name="t", description="", parameters={},
+        steps=[
+            {"op": "extract", "key": "title", "target": {"role": "heading"}, "attr": "text"},
+            _CLICK,  # fails (click_fail_times=1), non-optional
+        ],
+    )
+    try:
+        Engine(browser, max_retries=0).execute(recipe, {})
+    except RecipeFailure as e:
+        assert e.partial == {"title": "extracted-text"}  # earlier extract salvaged
+        assert e.url == "https://shop.example/cart"       # where it died
+        return
+    raise AssertionError("should have raised RecipeFailure")
+
+
+def test_success_path_unchanged_and_no_partial():
+    # Happy path still returns the full dict; a clean RecipeFailure has empty
+    # partial/url until execute fills them (defaults).
+    browser = FakeBrowser()
+    recipe = Recipe(
+        name="t", description="", parameters={},
+        steps=[{"op": "extract", "key": "title", "target": {"role": "heading"}, "attr": "text"}],
+    )
+    assert Engine(browser).execute(recipe, {}) == {"title": "extracted-text"}
+    bare = RecipeFailure(0, "x", op="click")
+    assert bare.partial == {} and bare.url == ""

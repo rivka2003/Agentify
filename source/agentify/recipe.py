@@ -21,6 +21,11 @@ class RecipeFailure(Exception):
         self.step_index = step_index
         self.reason = reason
         self.op = op  # the failing step's op, for actionable error surfaces
+        # Recovery context, filled in by Engine.execute as the failure
+        # propagates: what was extracted before the failure, and where the
+        # browser landed. Defaults keep the (step_index, reason, op) contract.
+        self.partial: dict = {}
+        self.url: str = ""
 
 
 @dataclass
@@ -191,8 +196,22 @@ class Engine:
         returned: dict[str, Any] = {}
         steps = _substitute(recipe.steps, args)
         for i, step in enumerate(steps):
-            self._execute_step(i, step, args, returned)
+            try:
+                self._execute_step(i, step, args, returned)
+            except RecipeFailure as e:
+                # Fail soft: hand the caller what was already extracted and where
+                # the browser landed, so a late failure still yields partial data
+                # and an actionable location instead of nothing.
+                e.partial = dict(returned)
+                e.url = self._current_url()
+                raise
         return returned
+
+    def _current_url(self) -> str:
+        try:
+            return self.browser.page.url
+        except Exception:
+            return ""
 
     def _execute_step(self, idx, step: dict, args: dict, returned: dict) -> None:
         """Run one step with retry / `optional` / one-line-failure handling.

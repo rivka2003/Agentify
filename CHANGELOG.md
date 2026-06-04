@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Fail-soft recovery.** When a tool fails partway, `RecipeFailure` now carries
+  `partial` (data extracted before the failure) and `url` (where the browser
+  landed). `call` prints the salvaged partial + URL instead of discarding them;
+  `run-mapped` feeds the LLM a `{error, failed_step, op, url, partial}` payload
+  and nudges it to switch tools when the same one fails repeatedly. Mid-recipe
+  session-expiry detection and rollback/resume remain out of scope (recipes
+  aren't transactional; deterministic replay from step 0 is the recovery model).
 - **Deeper, configurable crawl.** The map crawler is now a depth-aware, budgeted,
   content-aware BFS: `--max-pages` / `--max-depth` (on `map`, defaults 10 / 2)
   control breadth and hops, and link selection prefers action pages and deeper

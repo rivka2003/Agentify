@@ -35,32 +35,47 @@ class Target:
         )
 
 
+def _try_in(ctx, target: Target) -> Optional[Locator]:
+    """Try role -> css -> text in one searchable context (a Page or a Frame, which
+    share these methods). Returns the first match, or None."""
+    if target.role:
+        loc = ctx.get_by_role(target.role, name=target.name) if target.name else ctx.get_by_role(target.role)
+        try:
+            if loc.count() > 0:
+                return loc.first
+        except Exception:
+            pass
+    if target.css:
+        loc = ctx.locator(target.css)
+        try:
+            if loc.count() > 0:
+                return loc.first
+        except Exception:
+            pass
+    if target.text:
+        loc = ctx.get_by_text(target.text, exact=False)
+        try:
+            if loc.count() > 0:
+                return loc.first
+        except Exception:
+            pass
+    return None
+
+
 def resolve(page: Page, target: Target, timeout_ms: int = 3000) -> Locator:
-    """Pick a Locator for target. Tries strategies in priority order, polling until one is found or timeout."""
+    """Pick a Locator for target. Tries strategies in priority order, polling
+    until one is found or timeout. Searches the main frame first, then every child
+    iframe, so a control inside an `<iframe>` resolves with the same frame-agnostic
+    role+name target (`page.frames` lists the main frame first)."""
     start_time = time.time()
+    # Real Playwright pages expose `frames` (main first); fall back to the page
+    # itself for page-like objects (tests) that don't.
+    contexts = getattr(page, "frames", None) or [page]
     while True:
-        if target.role:
-            loc = page.get_by_role(target.role, name=target.name) if target.name else page.get_by_role(target.role)
-            try:
-                if loc.count() > 0:
-                    return loc.first
-            except Exception:
-                pass
-        if target.css:
-            loc = page.locator(target.css)
-            try:
-                if loc.count() > 0:
-                    return loc.first
-            except Exception:
-                pass
-        if target.text:
-            loc = page.get_by_text(target.text, exact=False)
-            try:
-                if loc.count() > 0:
-                    return loc.first
-            except Exception:
-                pass
-        
+        for ctx in contexts:
+            loc = _try_in(ctx, target)
+            if loc is not None:
+                return loc
         if (time.time() - start_time) * 1000 > timeout_ms:
             break
         time.sleep(0.03)

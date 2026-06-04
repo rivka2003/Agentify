@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **JS-heavy sites: iframe-aware capture & resolve.** `ax_tree.snapshot()` now
+  collects interactive elements from the main frame and every child `<iframe>`
+  (each element's locator bound to its own frame), and `selectors.resolve()` falls
+  through to each frame when the top page has no match — so a control inside an
+  iframe is both seen (`map`) and operated (`call`) with the same frame-agnostic
+  role+name target. `agentify crawl --elements` prints the observed controls per
+  page (including framed ones). Closed shadow DOM remains out of scope.
 - **JS-heavy sites, phase 1: settle + consent walls.** `Browser.observe()` now
   waits for the page to render (polls until the interactive-element count is
   non-zero and stable, retrying on an empty snapshot) instead of firing at
@@ -15,6 +22,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zero elements. The crawler dismisses common cookie/consent interstitials
   (new `interstitials.py`, reject-first then accept) so `crawl`/`map` reach the
   real app instead of a "before you continue" wall (Google Flights/Maps, LinkedIn).
+- **JS-heavy sites: custom ARIA widgets confirmed operable.** Verified end-to-end
+  (incl. inside iframes) that `role=combobox`/`listbox`/`option` autocompletes and
+  `role=gridcell` date grids — the div-based widgets that JS sites use instead of
+  native `<select>` — are driven by the existing `click`/`type`/`verify` +
+  first-option ops plus the autocomplete normaliser; no new op was needed. Added an
+  example to the test suite.
+- **JS-heavy sites — known limits.** What these changes deliberately do **not**
+  solve, found while testing Google Flights / Kayak / Booking / LinkedIn / X /
+  YouTube / Airbnb / Maps: hard **CAPTCHA / anti-bot** challenges (e.g. Cloudflare,
+  Booking's interstitial — the remaining blocker to full flight-search automation),
+  **canvas/WebGL** apps with no semantic DOM (Maps, Figma), **closed** shadow DOM
+  (unreadable by design), and **auth walls** (a login wall is not a cookie wall —
+  use the `--session`/`login` path). Relevance-ranking very dense pages was
+  evaluated and dropped — real pages rarely exceed the snapshot cap of *visible*
+  controls.
 - **Fail-soft recovery.** When a tool fails partway, `RecipeFailure` now carries
   `partial` (data extracted before the failure) and `url` (where the browser
   landed). `call` prints the salvaged partial + URL instead of discarding them;

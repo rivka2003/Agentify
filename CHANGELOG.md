@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **JS-heavy sites: iframe-aware capture & resolve.** `ax_tree.snapshot()` now
+  collects interactive elements from the main frame and every child `<iframe>`
+  (each element's locator bound to its own frame), and `selectors.resolve()` falls
+  through to each frame when the top page has no match — so a control inside an
+  iframe is both seen (`map`) and operated (`call`) with the same frame-agnostic
+  role+name target. `agentify crawl --elements` prints the observed controls per
+  page (including framed ones). Closed shadow DOM remains out of scope.
 - **JS-heavy sites, phase 1: settle + consent walls.** `Browser.observe()` now
   waits for the page to render (polls until the interactive-element count is
   non-zero and stable, retrying on an empty snapshot) instead of firing at

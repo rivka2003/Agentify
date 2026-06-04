@@ -372,9 +372,15 @@ Replay is forgiving of real-site flakiness without sacrificing determinism:
   `domcontentloaded`, so client-rendered SPAs no longer come back blank. The
   crawler also clicks past common cookie/consent interstitials (reject-first, then
   accept; e.g. Google's "before you continue") so it reaches the real app rather
-  than the wall. **Still hard:** custom ARIA widgets (combobox/date-picker), very
-  dense pages (element cap), iframes/shadow DOM, canvas apps, and hard
-  CAPTCHA/anti-bot — see the JS-sites roadmap.
+  than the wall.
+- **JS-heavy sites: iframe-aware.** The snapshot collects from the main frame and
+  every child `<iframe>`, and `resolve()` falls through to each frame when the top
+  page has no match — so a control inside an iframe is both **seen** (`map`/the
+  agent) and **operated** (`call` replay) with the same frame-agnostic role+name
+  target. Custom ARIA widgets themselves (combobox / autocomplete / date-grid)
+  already work via the existing `click`/`type`/`verify` + first-option ops.
+  **Still hard:** very dense pages (element cap), **closed** shadow DOM (unreadable
+  by design), canvas apps, and hard CAPTCHA/anti-bot — see the JS-sites roadmap.
 
 ### Path forward
 

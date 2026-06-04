@@ -52,7 +52,7 @@ See exactly which pages `map` will survey — handy for tuning `--max-pages`/`--
   --url https://news.ycombinator.com --max-pages 8 --max-depth 2
 ```
 
-Add `--session NAME` to crawl with a saved login (`storage_state`) so authenticated pages are visited too.
+Add `--session NAME` to crawl with a saved login (`storage_state`) so authenticated pages are visited too. Add `--elements` to print the interactive controls observed per page (including any inside `<iframe>`s — capture and replay are both iframe-aware).
 
 ### Multi-step flows (any site, no per-site code)
 

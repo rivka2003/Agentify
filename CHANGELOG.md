@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Conditional branching (`if_verify`).** A new Engine op,
+  `{"op": "if_verify", "check": {kind, value, …}, "then": [...steps], "else": […]}`,
+  evaluates a probe once (same kinds as `verify`) and runs the chosen branch.
+  Branch sub-steps run through the same per-step path, so they keep transient
+  retries + the `optional` flag, and `if_verify` can nest. Enables "if a modal is
+  open, dismiss it; else carry on" without pushing every micro-branch up to the
+  LLM. Native JS dialogs and map-time auto-proposal of branches remain out of
+  scope.
 - **Runtime robustness for replay.** The `Engine` now retries **transient**
   step failures (Playwright timeouts, detached elements, navigation/network
   races) with a small bounded backoff — real-site flakiness no longer kills a
